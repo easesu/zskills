@@ -65,44 +65,18 @@ Ask the user if any of these are ambiguous.
 
 ### Step 2: Read and compare
 
-Read the base en.json and all target language files. For each target language, perform a **deep recursive comparison** against the base:
+Read the base en.json and all target language files. For each target language, run `i18n_diff.py` to perform a **deep recursive comparison** against the base:
 
+```bash
+python scripts/i18n_diff.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja]
+```
+
+The script reports:
 - **Missing keys**: Present in base but absent in target
 - **Extra keys**: Present in target but absent in base
 - **Structural mismatch**: Same key but different type (object vs string, array vs object, etc.)
-- **Content drift**: Same key path but the value structure differs (e.g. nested children changed)
 
-Use a script to do the diff rather than manual inspection — it's faster and more reliable:
-
-```python
-import json
-
-def deep_diff(base, target, path=""):
-    missing, extra, mismatch = [], [], []
-    if isinstance(base, dict) and isinstance(target, dict):
-        for k in base:
-            if k not in target:
-                missing.append(f"{path}.{k}" if path else k)
-            else:
-                m, e, x = deep_diff(base[k], target[k], f"{path}.{k}" if path else k)
-                missing += m; extra += e; mismatch += x
-        for k in target:
-            if k not in base:
-                extra.append(f"{path}.{k}" if path else k)
-    elif isinstance(base, list) and isinstance(target, list):
-        for i in range(len(base)):
-            if i >= len(target):
-                missing.append(f"{path}[{i}]")
-            else:
-                m, e, x = deep_diff(base[i], target[i], f"{path}[{i}]")
-                missing += m; extra += e; mismatch += x
-        for i in range(len(target)):
-            if i >= len(base):
-                extra.append(f"{path}[{i}]")
-    elif type(base) != type(target):
-        mismatch.append(f"{path} (base: {type(base).__name__}, target: {type(target).__name__})")
-    return missing, extra, mismatch
-```
+If you need to inspect specific key values or the diff script isn't available, you can use the inline `deep_diff()` function from the script directly in a Python REPL.
 
 ### Step 3: Present the plan
 
@@ -119,10 +93,21 @@ Wait for user confirmation before proceeding.
 
 For each target language file:
 
-1. **Remove extra keys** that don't exist in base
-2. **Add missing keys** at the correct position in the JSON structure
-3. **Fix structural mismatches** to match base structure
-4. **Translate content** — when translating:
+1. **Run `i18n_sync.py` with `--dry-run`** to preview structural changes:
+
+   ```bash
+   python scripts/i18n_sync.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja] --dry-run
+   ```
+
+2. **Review the dry-run output** and confirm it matches the plan
+
+3. **Execute the sync** (remove `--dry-run`) to apply structural changes:
+
+   ```bash
+   python scripts/i18n_sync.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja]
+   ```
+
+4. **Translate content** — the sync script adds English text as placeholder; you need to translate it:
    - Use the en.json value as the source text
    - Do NOT reference old/deprecated translations in the same file
    - Preserve interpolation syntax like `{variable}`, `{count}`, `{perMonth}`
@@ -132,7 +117,13 @@ For each target language file:
 
 ### Step 5: Verify
 
-After making all changes, run a verification script to confirm:
+After making all changes, run `i18n_diff.py` again to verify:
+
+```bash
+python scripts/i18n_diff.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja]
+```
+
+Confirm:
 
 1. All target files have identical key structure to the base file
 2. No extra keys remain
@@ -140,6 +131,81 @@ After making all changes, run a verification script to confirm:
 4. JSON is valid (no syntax errors)
 
 Report the results to the user.
+
+## Scripts
+
+This skill includes two companion Python scripts in `scripts/`. Use them instead of manual inspection or inline Python — they are faster, more reliable, and produce consistent output.
+
+### `scripts/i18n_diff.py` — Compare locale files
+
+Recursively compares a base locale file against target locale files and reports missing keys, extra keys, and structural mismatches.
+
+**Usage:**
+
+```bash
+python scripts/i18n_diff.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja,ko]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|---|---|
+| `base_file` | Path to the base locale file (e.g. `en.json`) |
+| `target_dir` | Directory containing target locale files |
+| `--scope` | Only compare keys within this dot-separated path |
+| `--lang` | Comma-separated language codes to compare (default: all non-en) |
+
+**Examples:**
+
+```bash
+# Compare all files in a module directory
+python scripts/i18n_diff.py i18n/locales/subscription/en.json i18n/locales/subscription/
+
+# Compare only a specific key path
+python scripts/i18n_diff.py i18n/locales/en.json i18n/locales/ --scope purchaseModule
+
+# Compare only specific languages
+python scripts/i18n_diff.py i18n/locales/pricing/en.json i18n/locales/pricing/ --lang ar,de
+```
+
+**When to use:** Step 2 (Read and compare) and Step 5 (Verify) of the workflow.
+
+### `scripts/i18n_sync.py` — Sync key structure
+
+Syncs the key structure of target locale files to match the base file. Adds missing keys (with English text as placeholder), removes extra keys, and fixes structural mismatches.
+
+> **Note:** This script does **NOT** translate content. It only syncs the key structure. After running it, you still need to translate the English placeholder text to each language.
+
+**Usage:**
+
+```bash
+python scripts/i18n_sync.py <base_file> <target_dir> [--scope key.path] [--lang zh-CN,ja] [--dry-run]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|---|---|
+| `base_file` | Path to the base locale file (e.g. `en.json`) |
+| `target_dir` | Directory containing target locale files |
+| `--scope` | Only sync keys within this dot-separated path |
+| `--lang` | Comma-separated language codes to sync (default: all non-en) |
+| `--dry-run` | Preview changes without writing files |
+
+**Examples:**
+
+```bash
+# Preview what would change (recommended before actual sync)
+python scripts/i18n_sync.py i18n/locales/subscription/en.json i18n/locales/subscription/ --dry-run
+
+# Sync only a specific key path
+python scripts/i18n_sync.py i18n/locales/en.json i18n/locales/ --scope purchaseModule
+
+# Sync and write changes
+python scripts/i18n_sync.py i18n/locales/subscription/en.json i18n/locales/subscription/
+```
+
+**When to use:** Step 4 (Execute changes) of the workflow. Always run with `--dry-run` first and review the output before writing.
 
 ## Common Patterns from Past Work
 
